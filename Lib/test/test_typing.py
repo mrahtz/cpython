@@ -394,6 +394,29 @@ class TypeVarTupleTests(BaseTestCase):
         with self.assertRaises(TypeError):
             C[int]
 
+    def test_args_and_parameters(self):
+        T = TypeVar('T')
+        Ts = TypeVarTuple('Ts')
+        Ts2 = TypeVarTuple('Ts2')
+
+        t1 = Tuple[*Ts]
+        self.assertEqual(t1.__args__, (*Ts,))
+        self.assertEqual(t1.__parameters__, (*Ts,))
+
+        t2 = Tuple[T, *Ts]
+        self.assertEqual(t2.__args__, (T, *Ts))
+        self.assertEqual(t2.__parameters__, (T, *Ts))
+
+        t3 = Tuple[*Ts, T]
+        self.assertEqual(t3.__args__, (*Ts, T))
+        self.assertEqual(t3.__parameters__, (*Ts, T))
+
+        class C(Generic[*Ts]): pass
+        self.assertEqual(C.__parameters__, (*Ts,))
+        c2 = C[*Ts2]
+        self.assertEqual(c2.__args__, (*Ts2,))
+        self.assertEqual(c2.__parameters__, (*Ts2,))
+
 
 class UnionTests(BaseTestCase):
 
