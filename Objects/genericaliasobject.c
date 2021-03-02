@@ -31,6 +31,7 @@ ga_dealloc(PyObject *self)
 static int
 ga_traverse(PyObject *self, visitproc visit, void *arg)
 {
+    printf("ga_traverse\n");
     gaobject *alias = (gaobject *)self;
     Py_VISIT(alias->origin);
     Py_VISIT(alias->args);
@@ -41,6 +42,7 @@ ga_traverse(PyObject *self, visitproc visit, void *arg)
 static int
 ga_repr_item(_PyUnicodeWriter *writer, PyObject *p)
 {
+    printf("ga_repr_item\n");
     _Py_IDENTIFIER(__module__);
     _Py_IDENTIFIER(__qualname__);
     _Py_IDENTIFIER(__origin__);
@@ -118,6 +120,7 @@ done:
 static PyObject *
 ga_repr(PyObject *self)
 {
+    printf("ga_repr\n");
     gaobject *alias = (gaobject *)self;
     Py_ssize_t len = PyTuple_GET_SIZE(alias->args);
 
@@ -184,7 +187,7 @@ is_typing_name(PyObject *obj, int num, ...)
     int res = PyUnicode_Check(module)
         && _PyUnicode_EqualToASCIIString(module, "typing");
     Py_DECREF(module);
-    
+
     return res;
 }
 
@@ -193,7 +196,9 @@ is_typing_name(PyObject *obj, int num, ...)
 static inline int
 is_typevarlike(PyObject *obj)
 {
-    return is_typing_name(obj, 2, "TypeVar", "ParamSpec");
+    printf("is_typevarlike\n");
+    printf("%s\n", Py_TYPE(obj)->tp_name);
+    return is_typing_name(obj, 3, "TypeVar", "ParamSpec", "_UnpackedTypeVarTuple");
 }
 
 static inline int
@@ -202,10 +207,23 @@ is_paramspec(PyObject *obj)
     return is_typing_name(obj, 1, "ParamSpec");
 }
 
+static inline int
+is_packed_typevartuple(PyObject *obj)
+{
+    return is_typing_name(obj, 1, "TypeVarTuple");
+}
+
+static inline int
+is_unpacked_typevartuple(PyObject *obj)
+{
+    return is_typing_name(obj, 1, "_UnpackedTypeVarTuple");
+}
+
 // Index of item in self[:len], or -1 if not found (self is a tuple)
 static Py_ssize_t
 tuple_index(PyObject *self, Py_ssize_t len, PyObject *item)
 {
+    printf("tuple_index\n");
     for (Py_ssize_t i = 0; i < len; i++) {
         if (PyTuple_GET_ITEM(self, i) == item) {
             return i;
@@ -228,6 +246,7 @@ tuple_add(PyObject *self, Py_ssize_t len, PyObject *item)
 static PyObject *
 make_parameters(PyObject *args)
 {
+    printf("make_parameters\n");
     Py_ssize_t nargs = PyTuple_GET_SIZE(args);
     Py_ssize_t len = nargs;
     PyObject *parameters = PyTuple_New(len);
@@ -287,6 +306,7 @@ make_parameters(PyObject *args)
 static PyObject *
 subs_tvars(PyObject *obj, PyObject *params, PyObject **argitems)
 {
+    printf("subs_tvars\n");
     _Py_IDENTIFIER(__parameters__);
     PyObject *subparams;
     if (_PyObject_LookupAttrId(obj, &PyId___parameters__, &subparams) < 0) {
@@ -328,9 +348,43 @@ subs_tvars(PyObject *obj, PyObject *params, PyObject **argitems)
     return obj;
 }
 
+/* Get the minimum number of type arguments this alias should accept.
+   This should be equal to the number of items in __parameters__ that are not
+   an unpacked type variable tuple (which can take an arbitrary number of type
+   arguments). */
+static Py_ssize_t
+get_min_n_args(PyObject *parameters)
+{
+    Py_ssize_t min_n_args = 0;
+    Py_ssize_t n_params = PyTuple_Size(parameters);
+    for (int i = 0; i < n_params; ++i) {
+        PyObject *param = PyTuple_GetItem(parameters, i);
+        if (is_unpacked_typevartuple(param) == 0) {
+            min_n_args += 1;
+        }
+    }
+    return min_n_args;
+}
+
+/* Ditto, but the maximum number of type arguments. If -1, there is no
+   maximum, because one of the parameters is an unpacked type variable tuple. */
+static Py_ssize_t
+get_max_n_args(PyObject *parameters)
+{
+    Py_ssize_t n_params = PyTuple_Size(parameters);
+    for (int i = 0; i < n_params; ++i) {
+        PyObject *param = PyTuple_GetItem(parameters, i);
+        if (is_unpacked_typevartuple(param) == 1) {
+          return -1;
+        }
+    }
+    return n_params;
+}
+
 static PyObject *
 ga_getitem(PyObject *self, PyObject *item)
 {
+    printf("ga_getitem\n");
     gaobject *alias = (gaobject *)self;
     // do a lookup for __parameters__ so it gets populated (if not already)
     if (alias->parameters == NULL) {
@@ -340,7 +394,9 @@ ga_getitem(PyObject *self, PyObject *item)
         }
     }
     Py_ssize_t nparams = PyTuple_GET_SIZE(alias->parameters);
-    if (nparams == 0) {
+    Py_ssize_t min_n_args = get_min_n_args(alias->parameters);
+    Py_ssize_t max_n_args = get_max_n_args(alias->parameters);
+    if (max_n_args == 0) {
         return PyErr_Format(PyExc_TypeError,
                             "There are no type variables left in %R",
                             self);
@@ -348,18 +404,25 @@ ga_getitem(PyObject *self, PyObject *item)
     int is_tuple = PyTuple_Check(item);
     Py_ssize_t nitems = is_tuple ? PyTuple_GET_SIZE(item) : 1;
     PyObject **argitems = is_tuple ? &PyTuple_GET_ITEM(item, 0) : &item;
-    // A special case in PEP 612 where if X = Callable[P, int], 
+    // A special case in PEP 612 where if X = Callable[P, int],
     // then X[int, str] == X[[int, str]].
     if (nparams == 1 && nitems > 1 && is_tuple &&
         is_paramspec(PyTuple_GET_ITEM(alias->parameters, 0))) {
         argitems = &item;
     }
     else {
-        if (nitems != nparams) {
+        if (nitems < min_n_args) {
             return PyErr_Format(PyExc_TypeError,
-                "Too %s arguments for %R",
-                nitems > nparams ? "many" : "few",
-                self);
+                "Too few arguments for %R; actual %d, expected at least %d",
+                self, nitems, min_n_args
+            );
+        }
+        // If max_n_args == -1, then there's no maximum.
+        if (max_n_args != (-1) && nitems > max_n_args) {
+            return PyErr_Format(PyExc_TypeError,
+                "Too many arguments for %R; actual %d, expected at most %d",
+                self, nitems, max_n_args
+            );
         }
     }
     /* Replace all type variables (specified by alias->parameters)
@@ -431,6 +494,7 @@ ga_hash(PyObject *self)
 static PyObject *
 ga_call(PyObject *self, PyObject *args, PyObject *kwds)
 {
+    printf("ga_call\n");
     gaobject *alias = (gaobject *)self;
     PyObject *obj = PyObject_Call(alias->origin, args, kwds);
     if (obj != NULL) {
@@ -596,6 +660,7 @@ static PyMemberDef ga_members[] = {
 static PyObject *
 ga_parameters(PyObject *self, void *unused)
 {
+    printf("ga_parameters\n");
     gaobject *alias = (gaobject *)self;
     if (alias->parameters == NULL) {
         alias->parameters = make_parameters(alias->args);
@@ -613,10 +678,11 @@ static PyGetSetDef ga_properties[] = {
 };
 
 /* A helper function to create GenericAlias' args tuple and set its attributes.
- * Returns 1 on success, 0 on failure. 
+ * Returns 1 on success, 0 on failure.
  */
 static inline int
 setup_ga(gaobject *alias, PyObject *origin, PyObject *args) {
+    printf("setup_ga\n");
     if (!PyTuple_Check(args)) {
         args = PyTuple_Pack(1, args);
         if (args == NULL) {
@@ -638,6 +704,7 @@ setup_ga(gaobject *alias, PyObject *origin, PyObject *args) {
 static PyObject *
 ga_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 {
+    printf("ga_new\n");
     if (!_PyArg_NoKeywords("GenericAlias", kwds)) {
         return NULL;
     }
@@ -694,6 +761,7 @@ PyTypeObject Py_GenericAliasType = {
 PyObject *
 Py_GenericAlias(PyObject *origin, PyObject *args)
 {
+    printf("Py_GenericAlias\n");
     gaobject *alias = PyObject_GC_New(gaobject, &Py_GenericAliasType);
     if (alias == NULL) {
         return NULL;

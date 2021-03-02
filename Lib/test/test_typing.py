@@ -290,19 +290,52 @@ class TypeVarTupleTests(BaseTestCase):
             Unpack[List[int]]
 
     def test_tuple(self):
+        T = TypeVar('T")')
         Ts = TypeVarTuple('Ts')
-        Tuple[Unpack[Ts]]
+
+        t1 = Tuple[Unpack[Ts]]
+        t1[()]
+        t1[int]
+        t1[int, str]
+
+        t2 = tuple[Unpack[Ts]]
+        t2[()]
+        t2[int]
+        t2[int, str]
+
+        t3 = Tuple[T, Unpack[Ts]]
+        with self.assertRaises(TypeError):
+            t3[()]
+        t3[int]
+        t3[int, str]
+        t3[int, str, bool]
+
+        t4 = tuple[T, Unpack[Ts]]
+        with self.assertRaises(TypeError):
+            t4[()]
+        t4[int]
+        t4[int, str]
+        t4[int, str, bool]
+
         with self.assertRaises(TypeError):
             Tuple[Ts]
+        with self.assertRaises(TypeError):
+            tuple[Ts]
 
     def test_list(self):
         Ts = TypeVarTuple('Ts')
         with self.assertRaises(TypeError):
             List[Ts]
         with self.assertRaises(TypeError):
+            list[Ts]
+        with self.assertRaises(TypeError):
             List[*Ts]
         with self.assertRaises(TypeError):
+            list[*Ts]
+        with self.assertRaises(TypeError):
             List[Unpack[Ts]]
+        with self.assertRaises(TypeError):
+            list[Unpack[Ts]]
 
     def test_union(self):
         Xs = TypeVarTuple('Xs')

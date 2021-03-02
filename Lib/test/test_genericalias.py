@@ -39,11 +39,13 @@ from unittest.case import _AssertRaisesContext
 from queue import Queue, SimpleQueue
 from weakref import WeakSet, ReferenceType, ref
 import typing
+from typing import Unpack
 
-from typing import TypeVar
+from typing import TypeVar, TypeVarTuple
 T = TypeVar('T')
 K = TypeVar('K')
 V = TypeVar('V')
+Ts = TypeVarTuple('Ts)')
 
 class BaseTest(unittest.TestCase):
     """Test basics."""
@@ -170,7 +172,7 @@ class BaseTest(unittest.TestCase):
         self.assertEqual(a.__args__, (int,))
         self.assertEqual(a.__parameters__, ())
 
-    def test_parameters(self):
+    def test_parameters_typevar(self):
         from typing import List, Dict, Callable
         D0 = dict[str, int]
         self.assertEqual(D0.__args__, (str, int))
@@ -208,6 +210,18 @@ class BaseTest(unittest.TestCase):
         L5 = list[Callable[[K, V], K]]
         self.assertEqual(L5.__args__, (Callable[[K, V], K],))
         self.assertEqual(L5.__parameters__, (K, V))
+
+    def test_parameters_typevartuple(self):
+        from typing import Tuple
+        T0 = tuple[Unpack[Ts]]
+        self.assertEqual(T0.__args__, (Unpack[Ts],))
+        self.assertEqual(T0.__parameters__, (Unpack[Ts],))
+        T1 = tuple[tuple[Unpack[Ts]]]
+        self.assertEqual(T1.__args__, (tuple[Unpack[Ts]],))
+        self.assertEqual(T1.__parameters__, (Unpack[Ts],))
+        T2 = tuple[Tuple[Unpack[Ts]]]
+        self.assertEqual(T2.__args__, (Tuple[Unpack[Ts]],))
+        self.assertEqual(T2.__parameters__, (Unpack[Ts],))
 
     def test_parameter_chaining(self):
         from typing import List, Dict, Union, Callable
